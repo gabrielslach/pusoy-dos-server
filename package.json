@@ -1,0 +1,16 @@
+{
+  "name": "pusoy-server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "nodemon index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "fastify": "^3.29.0",
+    "fastify-websocket": "^2.0.7"
+  }
+}
