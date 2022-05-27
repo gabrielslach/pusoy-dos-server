@@ -15,6 +15,35 @@ const room = {
     playerTurn: 1
 };
 
+const broadcastMessage = (message, roomID) => {
+    const clients = fastify.websocketServer.clients;
+    clients.forEach(client => {
+        if (client.roomID !== params.roomID) {
+            return;
+        }
+
+        client.send(JSON.stringify(nextTurnData));
+    });
+}
+
+const getPlayerIndex = (playerName) => players.findIndex(p=>p === playerName);
+
+const dropCards = (roomID, playerName) => (cardsDropped) => {
+    const _playerIndex = getPlayerIndex(playerName);
+    const _room = room;
+    const _playerDeck = _room.playerDecks[_playerIndex];
+    
+    return _playerDeck.filter(d => {
+        const _cardIndex = cardsDropped.findIndex(c=> c.family === d.family && c.value === d.value);
+        return _cardIndex < 0;
+    })
+}
+                              
+const getNextPlayer = (currentPlayerName) => {
+    const _playerIndex = getPlayerIndex(playerName);
+    return _playerIndex++;
+}
+
 fastify.post('/new-room',(request, reply)=>{
     return room.roomID;
 });
@@ -29,15 +58,48 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, (conn, req, params) 
     conn.socket.playerID = params.playerID;
 
     conn.socket.on('message', (msg) => {
-        const clients = fastify.websocketServer.clients;
-
-        clients.forEach(client => {
-            if (client.roomID !== params.roomID) {
-                return;
-            }
-            
-            client.send("Congrats you're one of us!");
-        });
+        const data = JSON.parse(msg);
+        const {action, payload} = data;
+        const playerIndex = getPlayerIndex(conn.socket.playerID)
+        
+        const nextTurnData = {
+            nextPlayer: undefined,
+            droppedCards: [],
+            error: undefined,
+        };
+        
+        if (!checkturn(playerIndex))
+            nextTurnData.error = 'Invalid data';
+            return conn.send(JSON.stringify(nextTurnData));
+        }
+        
+        switch(action) {
+            case 'DROP_CARD':
+                const cardsLeft = dropCards(conn.socket.roomID, conn.socket.playerID)(payload);
+                if (room.playerDecks[playerIndex].length - cardsLeft.length !== payload.length) {
+                    nextTurnData.error = 'Invalid Data';
+                    break;
+                }
+                
+                const updateDB = {cardsLeft, nextPlayer};
+                nextTurnData.droppedCards = payload;
+                nextTurnData.nextPlayer = room.players[playerIndex];
+                break;
+                
+            case 'PASS':
+                const updateDB = {nextPlayer};
+                nextTurnData.nextPlayer = room.players[playerIndex];
+                break;
+                
+            default:
+                nextTurnData.error = 'Invalid data';
+        }
+    
+        if (nextTurnData.error) {
+            return conn.send(JSON.stringify(nextTurnData));
+        }
+        
+        broadcastMessage(JSON.stringify(nextTurnData), conn.socket.roomID);
     });
 
     conn.socket.on('close', () => {
