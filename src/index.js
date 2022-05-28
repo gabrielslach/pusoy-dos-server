@@ -54,6 +54,11 @@ const broadcastMessage = (message, roomID) => {
     });
 }
 
+const getRoomClients = (roomID) => {
+    const clients = fastify.websocketServer.clients;
+    return clients.filter(client => client.roomID === roomID);
+}
+
 const getPlayerIndex = (players, playerID) => players.findIndex(p=> p._id.equals(playerID));
 
 const dropCards = (deck) => (cardsDropped) => {
@@ -128,8 +133,20 @@ fastify.post('/enter-room', async (request, reply) => {
     return {
         roomID,
         myID: playerObj._id,
-        myDeck: roomSaved.playerDecks[playerIndex],
-        myTurn: roomSaved.playerTurn === playerIndex,
+    };
+})
+
+fastify.get('/my-room/:roomID/:playerID', async (request, reply) => {
+    const room = await Room.findOne({ roomID: request.params.roomID }).exec();
+    const playerIndex = getPlayerIndex(room.players, request.params.playerID);
+
+    if (!room) {
+        return { error: 'Cant find room.'}
+    };
+
+    return {
+        myDeck: room.playerDecks[playerIndex],
+        playerTurn: room.playerTurn
     };
 })
 
@@ -137,63 +154,84 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, (conn, req, params) 
     conn.socket.roomID = params.roomID;
     conn.socket.playerID = params.playerID;
 
+    conn.socket.on('open', () => {
+        const players = getRoomClients(conn.socket.roomID);
+        broadcastMessage(JSON.stringify({ type: "INFO", players }), conn.socket.roomID);
+    });
+
     conn.socket.on('message', async (msg) => {
-        const data = JSON.parse(msg);
-        const {action, payload} = data;
+        try {    
+            const data = JSON.parse(msg);
+            const {action, payload} = data;
 
-        const room = await Room.findOne({ roomID: conn.socket.roomID }).exec();
-        const playerIndex = getPlayerIndex(room.players, conn.socket.playerID);
-        
-        const nextTurnData = {
-            nextPlayer: undefined,
-            droppedCards: [],
-            error: undefined,
-        };
-        
-        if (room.playerTurn !== playerIndex) {
-            nextTurnData.error = 'Invalid data';
-            return conn.socket.send(JSON.stringify(nextTurnData));
-        }
-
-        const nextPlayerIndex = getNextPlayerIndex(playerIndex);
-        
-        switch(action) {
-            case 'DROP_CARD':
-                const cardsLeft = dropCards(room.playerDecks[playerIndex])(payload);
-                if (room.playerDecks[playerIndex].length - cardsLeft.length !== payload.length) {
-                    nextTurnData.error = 'Invalid Data';
-                    break;
-                }
-                
-                room.playerDecks[playerIndex] = cardsLeft;
-                room.playerTurn = nextPlayerIndex;
-                room.droppedCards.push(payload);
-
-                nextTurnData.droppedCards = payload;
-                nextTurnData.nextPlayer = room.players[nextPlayerIndex];
-                break;
-                
-            case 'PASS':
-                room.playerTurn = nextPlayerIndex;
-
-                nextTurnData.nextPlayer = room.players[nextPlayerIndex];
-                break;
-                
-            default:
+            const room = await Room.findOne({ roomID: conn.socket.roomID }).exec();
+            const playerIndex = getPlayerIndex(room.players, conn.socket.playerID);
+            
+            const nextTurnData = {
+                type: undefined,
+                nextPlayer: undefined,
+                droppedCards: [],
+                error: undefined,
+            };
+            
+            if (room.playerTurn !== playerIndex) {
                 nextTurnData.error = 'Invalid data';
-        }
-    
-        await room.save();
+                nextTurnData.type = 'ERROR';
+                return conn.socket.send(JSON.stringify(nextTurnData));
+            }
 
-        if (nextTurnData.error) {
-            return conn.socket.send(JSON.stringify(nextTurnData));
-        }
+            const nextPlayerIndex = getNextPlayerIndex(playerIndex);
+            
+            switch(action) {
+                case 'DROP_CARD':
+                    const cardsLeft = dropCards(room.playerDecks[playerIndex])(payload);
+                    if (room.playerDecks[playerIndex].length - cardsLeft.length !== payload.length) {
+                        nextTurnData.error = 'Invalid Data';
+                        break;
+                    }
+                    
+                    room.playerDecks[playerIndex] = cardsLeft;
+                    room.playerTurn = nextPlayerIndex;
+                    room.droppedCards.push(payload);
+
+                    nextTurnData.droppedCards = payload;
+                    nextTurnData.nextPlayer = room.players[nextPlayerIndex];
+                    break;
+                    
+                case 'PASS':
+                    room.playerTurn = nextPlayerIndex;
+
+                    nextTurnData.nextPlayer = room.players[nextPlayerIndex];
+                    break;
+                    
+                default:
+                    nextTurnData.error = 'Invalid data';
+                    break;
+            }
         
-        broadcastMessage(JSON.stringify(nextTurnData), conn.socket.roomID);
+            await room.save();
+
+            if (nextTurnData.error) {
+                nextTurnData.type = 'ERROR';
+                return conn.socket.send(JSON.stringify(nextTurnData));
+            }
+
+            if (action === 'DROP_CARD') {
+                conn.socket.send(JSON.stringify({type: 'PRIVATE', myDeck: room.playerDecks[playerIndex]}));
+            }
+            
+            
+            nextTurnData.type = 'PUBLIC';
+            broadcastMessage(JSON.stringify(nextTurnData), conn.socket.roomID);
+
+        } catch(error) {
+            conn.socket.send(JSON.stringify({ type: 'ERROR', error }));
+        }
     });
 
     conn.socket.on('close', () => {
-        console.log(`Closed ${conn.socket}`)
+        const players = getRoomClients(conn.socket.roomID);
+        broadcastMessage(JSON.stringify({ type: "INFO", players }), conn.socket.roomID);
     });
 });
 
