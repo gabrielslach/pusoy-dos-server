@@ -56,7 +56,9 @@ const broadcastMessage = (message, roomID) => {
 
 const getRoomClients = (roomID) => {
     const clients = fastify.websocketServer.clients;
-    return clients.filter(client => client.roomID === roomID);
+    return clients
+        .filter(client => client.roomID === roomID)
+        .map(client => client.roomID);
 }
 
 const getPlayerIndex = (players, playerID) => players.findIndex(p=> p._id.equals(playerID));
