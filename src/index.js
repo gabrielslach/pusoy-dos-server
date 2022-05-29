@@ -1,10 +1,17 @@
-const fastify = require('fastify')();
+const Fastify = require('fastify');
 const ws = require('fastify-websocket');
 
 const mongoose = require('./plugins/mongoose');
 const Room = require('./models/room');
 
-require('dotenv').config()
+require('dotenv').config();
+
+function build() {
+    const fastify = Fastify({ trustProxy: true })
+    return fastify
+}
+
+const fastify = build();
 
 fastify.register(ws, {options: { clientTracking: true }});
 fastify.register(mongoose);
@@ -55,10 +62,14 @@ const broadcastMessage = (message, roomID) => {
 }
 
 const getRoomClients = (roomID) => {
-    const clients = fastify.websocketServer.clients;
-    return clients
-        .filter(client => client.roomID === roomID)
-        .map(client => client.roomID);
+    try {
+        const clients = fastify.websocketServer.clients;
+        return clients
+            .filter(client => client.roomID === roomID)
+            .map(client => client.roomID);
+    } catch (error) {
+        return [];
+    }
 }
 
 const getPlayerIndex = (players, playerID) => players.findIndex(p=> p._id.equals(playerID));
@@ -80,6 +91,10 @@ const getNextPlayerIndex = (currentPlayerIndex) => {
 }
 
 const checkFirstTurn = c => (c.family === 'Clubs' && c.value === 3);
+
+fastify.register(require('@fastify/cors'), { 
+    origin: true
+  })
 
 fastify.post('/new-room',async (request, reply)=>{
     const cardDeck = createCardDeck(Math.round(Math.random() * 20));
@@ -148,7 +163,8 @@ fastify.get('/my-room/:roomID/:playerID', async (request, reply) => {
 
     return {
         myDeck: room.playerDecks[playerIndex],
-        playerTurn: room.playerTurn
+        playerTurn: room.playerTurn,
+        players: room.players.map(p => p.playerName)
     };
 })
 
@@ -158,6 +174,7 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, (conn, req, params) 
 
     conn.socket.on('open', () => {
         const players = getRoomClients(conn.socket.roomID);
+        console.log("No of players: ", players.length);
         broadcastMessage(JSON.stringify({ type: "INFO", players }), conn.socket.roomID);
     });
 
@@ -171,7 +188,7 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, (conn, req, params) 
             
             const nextTurnData = {
                 type: undefined,
-                nextPlayer: undefined,
+                nextPlayerIndex: undefined,
                 droppedCards: [],
                 error: undefined,
             };
@@ -197,13 +214,13 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, (conn, req, params) 
                     room.droppedCards.push(payload);
 
                     nextTurnData.droppedCards = payload;
-                    nextTurnData.nextPlayer = room.players[nextPlayerIndex];
+                    nextTurnData.nextPlayerIndex = nextPlayerIndex;
                     break;
                     
                 case 'PASS':
                     room.playerTurn = nextPlayerIndex;
 
-                    nextTurnData.nextPlayer = room.players[nextPlayerIndex];
+                    nextTurnData.nextPlayerIndex = nextPlayerIndex;
                     break;
                     
                 default:
@@ -237,11 +254,21 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, (conn, req, params) 
     });
 });
 
-fastify.listen({ port: 3000 }, (err, address) => {
-    if (err) {
-        console.error(err);
-        process.exit(1);
+async function start() {
+    const IS_GOOGLE_CLOUD_RUN = process.env.K_SERVICE !== undefined
+  
+    const port = process.env.PORT || 3000
+  
+    const address = IS_GOOGLE_CLOUD_RUN ? "0.0.0.0" : undefined
+  
+    try {
+      const server = fastify;
+      const _address = await server.listen(port, address)
+      console.log(`Listening on ${_address}`)
+    } catch (err) {
+      console.error(err)
+      process.exit(1)
     }
+  }
 
-    console.log(`Server listening at ${address}`);
-})
+start();
