@@ -64,15 +64,24 @@ const broadcastMessage = (message, roomID) => {
 const getRoomClients = (roomID) => {
     try {
         const clients = fastify.websocketServer.clients;
-        return clients
-            .filter(client => client.roomID === roomID)
-            .map(client => client.roomID);
+        const filteredArr = [];
+        clients.forEach(c => c.roomID === roomID && filteredArr.push(c.playerID))
+        return filteredArr
     } catch (error) {
         return [];
     }
 }
 
 const getPlayerIndex = (players, playerID) => players.findIndex(p=> p._id.equals(playerID));
+
+const getClientIDs = async (roomID) => {
+    const room = await Room.findOne({ roomID }).exec();
+    if (!room) {
+        return;
+    }
+    
+    return getRoomClients(roomID).map(clientID => getPlayerIndex(room.players, clientID));
+}
 
 const dropCards = (deck) => (cardsDropped) => {
     
@@ -168,18 +177,25 @@ fastify.get('/my-room/:roomID/:playerID', async (request, reply) => {
     };
 })
 
-fastify.get('/play/:roomID/:playerID', { websocket: true }, (conn, req, params) => {
+fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, params) => {
+    if (!params || !params.roomID || !params.playerID || 
+        params.roomID === 'undefined' || params.playerID === 'undefined') {
+        return;
+    }
+
     conn.socket.roomID = params.roomID;
     conn.socket.playerID = params.playerID;
 
-    conn.socket.on('open', () => {
-        const players = getRoomClients(conn.socket.roomID);
-        console.log("No of players: ", players.length);
-        broadcastMessage(JSON.stringify({ type: "INFO", players }), conn.socket.roomID);
+    const players = await getClientIDs(conn.socket.roomID);
+    broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", players }), conn.socket.roomID);
+
+    conn.socket.on('close', async () => {
+        const players = await getClientIDs(conn.socket.roomID);
+        broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", players }), conn.socket.roomID);
     });
 
     conn.socket.on('message', async (msg) => {
-        try {    
+        try {
             const data = JSON.parse(msg);
             const {action, payload} = data;
 
@@ -236,30 +252,25 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, (conn, req, params) 
             }
 
             if (action === 'DROP_CARD') {
-                conn.socket.send(JSON.stringify({type: 'PRIVATE', myDeck: room.playerDecks[playerIndex]}));
+                conn.socket.send(JSON.stringify({type: 'DECK_UPDATE', myDeck: room.playerDecks[playerIndex]}));
             }
             
             
-            nextTurnData.type = 'PUBLIC';
+            nextTurnData.type = 'NEXT_TURN';
             broadcastMessage(JSON.stringify(nextTurnData), conn.socket.roomID);
 
         } catch(error) {
             conn.socket.send(JSON.stringify({ type: 'ERROR', error }));
         }
     });
-
-    conn.socket.on('close', () => {
-        const players = getRoomClients(conn.socket.roomID);
-        broadcastMessage(JSON.stringify({ type: "INFO", players }), conn.socket.roomID);
-    });
 });
 
 async function start() {
     const IS_GOOGLE_CLOUD_RUN = process.env.K_SERVICE !== undefined
   
-    const port = process.env.PORT || 3000
+    const port = process.env.PORT || 3000;
   
-    const address = IS_GOOGLE_CLOUD_RUN ? "0.0.0.0" : undefined
+    const address = "0.0.0.0";
   
     try {
       const server = fastify;
