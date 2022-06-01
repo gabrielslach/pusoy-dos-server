@@ -74,13 +74,12 @@ const getRoomClients = (roomID) => {
 
 const getPlayerIndex = (players, playerID) => players.findIndex(p=> p._id.equals(playerID));
 
-const getClientIDs = async (roomID) => {
-    const room = await Room.findOne({ roomID }).exec();
-    if (!room) {
-        return;
-    }
-    
-    return getRoomClients(roomID).map(clientID => getPlayerIndex(room.players, clientID));
+const findRoom = (roomID) => {
+    return Room.findOne({ roomID }).exec();
+}
+
+const getClientIDs = (players, roomID) => {
+    return getRoomClients(roomID).map(clientID => getPlayerIndex(players, clientID));
 }
 
 const dropCards = (deck) => (cardsDropped) => {
@@ -100,6 +99,26 @@ const getNextPlayerIndex = (currentPlayerIndex) => {
 }
 
 const checkFirstTurn = c => (c.family === 'Clubs' && c.value === 3);
+
+const generateRoomID = async () => {
+    const alphanum = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
+
+    const roomIDArr = [];
+
+    for (let i = 0; i < 5; i++) {
+        roomIDArr.push(
+            alphanum[Math.round(Math.random() * (alphanum.length - 1))]
+            );
+    }
+
+    let roomID = roomIDArr.join('');
+    
+    if ( await Room.exists({ roomID }) ) {
+        roomID = await generateRoomID();
+    }
+
+    return roomID;
+}
 
 fastify.register(require('@fastify/cors'), { 
     origin: true
@@ -127,14 +146,17 @@ fastify.post('/new-room',async (request, reply)=>{
         }
     });
 
+    const roomID = await generateRoomID();
+
     const room = new Room({
-        roomID: request.body.roomID, //TODO
+        roomID,
         playerTurn,
         players: [],
         playerDecks
     });
     
-    return await room.save();
+    await room.save();
+    return { roomID };
 });
 
 fastify.post('/enter-room', async (request, reply) => {
@@ -172,8 +194,9 @@ fastify.get('/my-room/:roomID/:playerID', async (request, reply) => {
 
     return {
         myDeck: room.playerDecks[playerIndex],
+        myPlayerNumber: playerIndex,
         playerTurn: room.playerTurn,
-        players: room.players.map(p => p.playerName)
+        players: room.players.map(p => p.playerName),
     };
 })
 
@@ -186,12 +209,18 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, pa
     conn.socket.roomID = params.roomID;
     conn.socket.playerID = params.playerID;
 
-    const players = await getClientIDs(conn.socket.roomID);
-    broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", players }), conn.socket.roomID);
+    const room = await findRoom(conn.socket.roomID);
+    if (!room) {
+        return {message: 'Room not found.'};
+    }
+    const players = room.players.map(p => p.playerName);
+
+    const playersOnline = getClientIDs(room.players, conn.socket.roomID);
+    broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", players, playersOnline }), conn.socket.roomID);
 
     conn.socket.on('close', async () => {
-        const players = await getClientIDs(conn.socket.roomID);
-        broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", players }), conn.socket.roomID);
+        const playersOnline = getClientIDs(room.players, conn.socket.roomID);
+        broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", players, playersOnline }), conn.socket.roomID);
     });
 
     conn.socket.on('message', async (msg) => {
