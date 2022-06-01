@@ -74,11 +74,16 @@ const getRoomClients = (roomID) => {
 
 const getPlayerIndex = (players, playerID) => players.findIndex(p=> p._id.equals(playerID));
 
-const findRoom = (roomID) => {
-    return Room.findOne({ roomID }).exec();
+const findRoom = async (roomID) => {
+    const room = await Room.findOne({ roomID }).exec();
+    if (!room) {
+        return {};
+    }
+    return room;
 }
 
-const getClientIDs = (players, roomID) => {
+const getClientIDs = async (roomID) => {
+    const { players } = await findRoom(roomID);
     return getRoomClients(roomID).map(clientID => getPlayerIndex(players, clientID));
 }
 
@@ -209,18 +214,12 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, pa
     conn.socket.roomID = params.roomID;
     conn.socket.playerID = params.playerID;
 
-    const room = await findRoom(conn.socket.roomID);
-    if (!room) {
-        return {message: 'Room not found.'};
-    }
-    const players = room.players.map(p => p.playerName);
-
-    const playersOnline = getClientIDs(room.players, conn.socket.roomID);
-    broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", players, playersOnline }), conn.socket.roomID);
+    const playersOnline = await getClientIDs(conn.socket.roomID);
+    broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", playersOnline }), conn.socket.roomID);
 
     conn.socket.on('close', async () => {
-        const playersOnline = getClientIDs(room.players, conn.socket.roomID);
-        broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", players, playersOnline }), conn.socket.roomID);
+        const playersOnline = getClientIDs(conn.socket.roomID);
+        broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", playersOnline }), conn.socket.roomID);
     });
 
     conn.socket.on('message', async (msg) => {
