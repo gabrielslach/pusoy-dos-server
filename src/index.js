@@ -168,6 +168,9 @@ fastify.post('/enter-room', async (request, reply) => {
     const { roomID, playerName } = request.body;
     const room = await Room.findOne({ roomID }).exec();
 
+    if (!room) {
+        return { error: 'Room not found.' };
+    }
     if (room.players.length >= 4) {
         return { roomID, myID: null, error: 'Room is full.'};
     }
