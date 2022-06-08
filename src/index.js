@@ -238,6 +238,7 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, pa
                 nextPlayerIndex: undefined,
                 droppedCards: [],
                 error: undefined,
+                playersCardsCount: {},
             };
             
             if (room.playerTurn !== playerIndex) {
@@ -275,6 +276,9 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, pa
                     break;
             }
         
+            Object.entries(room.playerDecks).forEach(([key, val]) => {
+                nextTurnData.playersCardsCount[key] = val.length
+            });
             await room.save();
 
             if (nextTurnData.error) {
