@@ -64,9 +64,12 @@ const createCardDeck = (shuffleCount) => {
 
 const broadcastMessage = (message, roomID, fromSub = false) => {
     const clients = fastify.websocketServer.clients;
+    // All broadcast coming from this server is published to redis
     if (!fromSub) {
         fastify.redis.pub.publish(redisChannel, JSON.stringify({ roomID, message }));
+        return;
     }
+    // Only broadcast coming from redis is sent to clients
     clients.forEach(client => {
         if (client.roomID !== roomID) {
             return;
