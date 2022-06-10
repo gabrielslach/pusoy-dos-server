@@ -1,8 +1,10 @@
 const Fastify = require('fastify');
 const ws = require('fastify-websocket');
+const redis = require('@fastify/redis');
 
 const mongoose = require('./plugins/mongoose');
 const Room = require('./models/room');
+const redisPubSub = require('./plugins/redisPubSub');
 
 require('dotenv').config();
 
@@ -15,6 +17,16 @@ const fastify = build();
 
 fastify.register(ws, {options: { clientTracking: true }});
 fastify.register(mongoose);
+
+const redisChannel = "pusoy-2";
+fastify.register(redis, {
+    url : process.env.REDIS_URL,
+    namespace: 'sub'
+  });
+fastify.register(redis, {
+    url : process.env.REDIS_URL,
+    namespace: 'pub'
+});
 
 const createCardDeck = (shuffleCount) => {
     const suits = ['Clubs', 'Spades', 'Hearts', 'Diamonds'];
@@ -50,8 +62,11 @@ const createCardDeck = (shuffleCount) => {
     return deck;
 }
 
-const broadcastMessage = (message, roomID) => {
+const broadcastMessage = (message, roomID, fromSub = false) => {
     const clients = fastify.websocketServer.clients;
+    if (!fromSub) {
+        fastify.redis.pub.publish(redisChannel, JSON.stringify({ roomID, message }));
+    }
     clients.forEach(client => {
         if (client.roomID !== roomID) {
             return;
@@ -60,6 +75,8 @@ const broadcastMessage = (message, roomID) => {
         client.send(message);
     });
 }
+
+fastify.register(redisPubSub, { broadcastMessage, redisChannel });
 
 const getRoomClients = (roomID) => {
     try {
