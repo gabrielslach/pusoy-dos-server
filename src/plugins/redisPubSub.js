@@ -12,7 +12,7 @@ module.exports = fp(async function (fastify, { broadcastMessage, redisChannel })
         console.error("Redis failed to subscribe: %s", err.message);
         } else {
         console.log(
-            `Subscribed successfully! This client is currently subscribed to ${count} channels.`
+            `Redis subscribed successfully! This client is currently subscribed to ${count} channels.`
         );
         }
     });

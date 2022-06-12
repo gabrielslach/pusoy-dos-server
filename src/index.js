@@ -5,6 +5,7 @@ const redis = require('@fastify/redis');
 const mongoose = require('./plugins/mongoose');
 const Room = require('./models/room');
 const redisPubSub = require('./plugins/redisPubSub');
+const wsConnectionHealthCheck = require('./plugins/wsConnectionHealthCheck');
 
 require('dotenv').config();
 
@@ -17,16 +18,17 @@ const fastify = build();
 
 fastify.register(ws, {options: { clientTracking: true }});
 fastify.register(mongoose);
+fastify.register(wsConnectionHealthCheck);
 
-const redisChannel = "pusoy-2";
-fastify.register(redis, {
-    url : process.env.REDIS_URL,
-    namespace: 'sub'
-  });
-fastify.register(redis, {
-    url : process.env.REDIS_URL,
-    namespace: 'pub'
-});
+// const redisChannel = "pusoy-2";
+// fastify.register(redis, {
+//     url : process.env.REDIS_URL,
+//     namespace: 'sub'
+//   });
+// fastify.register(redis, {
+//     url : process.env.REDIS_URL,
+//     namespace: 'pub'
+// });
 
 const createCardDeck = (shuffleCount) => {
     const suits = ['Clubs', 'Spades', 'Hearts', 'Diamonds'];
@@ -65,11 +67,12 @@ const createCardDeck = (shuffleCount) => {
 const broadcastMessage = (message, roomID, fromSub = false) => {
     const clients = fastify.websocketServer.clients;
     // All broadcast coming from this server is published to redis
-    if (!fromSub) {
-        fastify.redis.pub.publish(redisChannel, JSON.stringify({ roomID, message }));
-        return;
-    }
+    // if (!fromSub) {
+    //     fastify.redis.pub.publish(redisChannel, JSON.stringify({ roomID, message }));
+    //     return;
+    // }
     // Only broadcast coming from redis is sent to clients
+    console.log("broadcast", message)
     clients.forEach(client => {
         if (client.roomID !== roomID) {
             return;
@@ -79,7 +82,7 @@ const broadcastMessage = (message, roomID, fromSub = false) => {
     });
 }
 
-fastify.register(redisPubSub, { broadcastMessage, redisChannel });
+// fastify.register(redisPubSub, { broadcastMessage, redisChannel });
 
 const getRoomClients = (roomID) => {
     try {
@@ -225,12 +228,19 @@ fastify.get('/my-room/:roomID/:playerID', async (request, reply) => {
         myPlayerNumber: playerIndex,
         playerTurn: room.playerTurn,
         players: room.players.map(p => p.playerName),
+        droppedCards: room.droppedCards[room.droppedCards.length - 1],
     };
 })
 
 fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, params) => {
     if (!params || !params.roomID || !params.playerID || 
         params.roomID === 'undefined' || params.playerID === 'undefined') {
+        return;
+    }
+
+    const clients = getRoomClients(params.roomID);
+
+    if (clients.includes(params.playerID)) {
         return;
     }
 
@@ -241,7 +251,7 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, pa
     broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", playersOnline }), conn.socket.roomID);
 
     conn.socket.on('close', async () => {
-        const playersOnline = getClientIDs(conn.socket.roomID);
+        const playersOnline = await getClientIDs(conn.socket.roomID);
         broadcastMessage(JSON.stringify({ type: "PLAYERS_INFO", playersOnline }), conn.socket.roomID);
     });
 
@@ -260,14 +270,18 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, pa
                 error: undefined,
                 playersCardsCount: {},
             };
-            
             if (room.playerTurn !== playerIndex) {
                 nextTurnData.error = 'Invalid data';
                 nextTurnData.type = 'ERROR';
                 return conn.socket.send(JSON.stringify(nextTurnData));
             }
 
-            const nextPlayerIndex = getNextPlayerIndex(playerIndex);
+            let nextPlayerIndex = playerIndex;
+            let counter = 0;
+            do {
+                nextPlayerIndex = getNextPlayerIndex(nextPlayerIndex)
+                counter++;
+            } while (counter < 4 && room.playerDecks[nextPlayerIndex].length < 1);
             
             switch(action) {
                 case 'DROP_CARD':
