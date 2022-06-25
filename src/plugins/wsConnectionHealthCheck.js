@@ -21,7 +21,7 @@ module.exports = fp(async function (fastify) {
         fastify.websocketServer.clients.forEach((client) => {
             console.log("Pinging: ", client.playerID, client.isAlive)
             if (!client.isAlive) {
-                return ws.terminate();
+                return client.terminate();
             }
 
             client.isAlive = false;
