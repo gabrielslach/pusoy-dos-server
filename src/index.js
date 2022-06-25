@@ -20,15 +20,15 @@ fastify.register(ws, {options: { clientTracking: true }});
 fastify.register(mongoose);
 fastify.register(wsConnectionHealthCheck);
 
-// const redisChannel = "pusoy-2";
-// fastify.register(redis, {
-//     url : process.env.REDIS_URL,
-//     namespace: 'sub'
-//   });
-// fastify.register(redis, {
-//     url : process.env.REDIS_URL,
-//     namespace: 'pub'
-// });
+const redisChannel = "pusoy-2";
+fastify.register(redis, {
+    url : process.env.REDIS_URL,
+    namespace: 'sub'
+  });
+fastify.register(redis, {
+    url : process.env.REDIS_URL,
+    namespace: 'pub'
+});
 
 const createCardDeck = (shuffleCount) => {
     const suits = ['Clubs', 'Spades', 'Hearts', 'Diamonds'];
@@ -67,12 +67,12 @@ const createCardDeck = (shuffleCount) => {
 const broadcastMessage = (message, roomID, fromSub = false) => {
     const clients = fastify.websocketServer.clients;
     // All broadcast coming from this server is published to redis
-    // if (!fromSub) {
-    //     fastify.redis.pub.publish(redisChannel, JSON.stringify({ roomID, message }));
-    //     return;
-    // }
+    if (!fromSub) {
+        fastify.redis.pub.publish(redisChannel, JSON.stringify({ roomID, message }));
+        return;
+    }
     // Only broadcast coming from redis is sent to clients
-    console.log("broadcast", message)
+
     clients.forEach(client => {
         if (client.roomID !== roomID) {
             return;
@@ -82,7 +82,7 @@ const broadcastMessage = (message, roomID, fromSub = false) => {
     });
 }
 
-// fastify.register(redisPubSub, { broadcastMessage, redisChannel });
+fastify.register(redisPubSub, { broadcastMessage, redisChannel });
 
 const getRoomClients = (roomID) => {
     try {
