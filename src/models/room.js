@@ -20,6 +20,7 @@ const roomSchema = new Schema({
         unique: true,
     },
     playerTurn: Number,
+    lastDropBy: Number,
     players: [playerSchema],
     playerDecks: {
         0: [cardSchema],

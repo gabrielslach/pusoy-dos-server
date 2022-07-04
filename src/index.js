@@ -6,6 +6,7 @@ const mongoose = require('./plugins/mongoose');
 const Room = require('./models/room');
 const redisPubSub = require('./plugins/redisPubSub');
 const wsConnectionHealthCheck = require('./plugins/wsConnectionHealthCheck');
+const getPlayerCardCount = require('./utils/getPlayerCardCount');
 
 require('dotenv').config();
 
@@ -179,6 +180,7 @@ fastify.post('/new-room',async (request, reply)=>{
     const room = new Room({
         roomID,
         playerTurn,
+        lastDropBy: playerTurn,
         players: [],
         playerDecks
     });
@@ -227,8 +229,10 @@ fastify.get('/my-room/:roomID/:playerID', async (request, reply) => {
         myDeck: room.playerDecks[playerIndex],
         myPlayerNumber: playerIndex,
         playerTurn: room.playerTurn,
+        lastDropBy: room.lastDropBy,
         players: room.players.map(p => p.playerName),
         droppedCards: room.droppedCards[room.droppedCards.length - 1],
+        playersCardsCount: getPlayerCardCount(room.playerDecks),
     };
 })
 
@@ -266,6 +270,7 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, pa
             const nextTurnData = {
                 type: undefined,
                 nextPlayerIndex: undefined,
+                lastDropBy: room.lastDropBy,
                 droppedCards: [],
                 error: undefined,
                 playersCardsCount: {},
@@ -293,10 +298,12 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, pa
                     
                     room.playerDecks[playerIndex] = cardsLeft;
                     room.playerTurn = nextPlayerIndex;
+                    room.lastDropBy = playerIndex;
                     room.droppedCards.push(payload);
 
                     nextTurnData.droppedCards = payload;
                     nextTurnData.nextPlayerIndex = nextPlayerIndex;
+                    nextTurnData.lastDropBy = playerIndex;
                     break;
                     
                 case 'PASS':
@@ -310,9 +317,8 @@ fastify.get('/play/:roomID/:playerID', { websocket: true }, async (conn, req, pa
                     break;
             }
         
-            Object.entries(room.playerDecks).forEach(([key, val]) => {
-                nextTurnData.playersCardsCount[key] = val.length
-            });
+            nextTurnData.playersCardsCount = getPlayerCardCount(room.playerDecks);
+            
             await room.save();
 
             if (nextTurnData.error) {
